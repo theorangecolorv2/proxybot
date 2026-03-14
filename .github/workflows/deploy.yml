@@ -18,6 +18,8 @@ jobs:
           script: |
             set -e
 
+            which git || apt-get update && apt-get install -y git
+
             if [ ! -d /opt/telemt/.git ]; then
               git clone https://github.com/theorangecolorv2/proxybot.git /opt/telemt
             fi
