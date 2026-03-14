@@ -1,6 +1,6 @@
 import aiosqlite
 from datetime import datetime, timedelta, timezone
-from config import DB_PATH, SUBSCRIPTION_DAYS
+from config import DB_PATH
 
 
 async def init_db():
@@ -35,6 +35,21 @@ async def init_db():
         """)
         await db.commit()
 
+        # Migrations: add new columns idempotently
+        for table, column, default in [
+            ("subscriptions", "devices", 1),
+            ("subscriptions", "months", 1),
+            ("payments", "devices", 1),
+            ("payments", "months", 1),
+        ]:
+            try:
+                await db.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT {default}"
+                )
+                await db.commit()
+            except Exception:
+                pass
+
 
 async def add_user(telegram_id: int, username: str | None):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -45,13 +60,13 @@ async def add_user(telegram_id: int, username: str | None):
         await db.commit()
 
 
-async def add_subscription(telegram_id: int, secret: str, username: str):
+async def add_subscription(telegram_id: int, secret: str, username: str, devices: int = 1, months: int = 1):
     now = datetime.now(timezone.utc)
-    expires = now + timedelta(days=SUBSCRIPTION_DAYS)
+    expires = now + timedelta(days=months * 30)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO subscriptions (telegram_id, secret, username, created_at, expires_at, active) VALUES (?, ?, ?, ?, ?, 1)",
-            (telegram_id, secret, username, now.isoformat(), expires.isoformat()),
+            "INSERT INTO subscriptions (telegram_id, secret, username, created_at, expires_at, active, devices, months) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+            (telegram_id, secret, username, now.isoformat(), expires.isoformat(), devices, months),
         )
         await db.commit()
 
@@ -88,11 +103,11 @@ async def deactivate_subscription(sub_id: int):
         await db.commit()
 
 
-async def create_payment(telegram_id: int, yookassa_payment_id: str, amount: str):
+async def create_payment(telegram_id: int, yookassa_payment_id: str, amount: str, devices: int = 1, months: int = 1):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO payments (telegram_id, yookassa_payment_id, amount, status, created_at) VALUES (?, ?, ?, 'pending', ?)",
-            (telegram_id, yookassa_payment_id, amount, datetime.now(timezone.utc).isoformat()),
+            "INSERT INTO payments (telegram_id, yookassa_payment_id, amount, status, created_at, devices, months) VALUES (?, ?, ?, 'pending', ?, ?, ?)",
+            (telegram_id, yookassa_payment_id, amount, datetime.now(timezone.utc).isoformat(), devices, months),
         )
         await db.commit()
 

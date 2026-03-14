@@ -13,16 +13,9 @@ from db import (
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
 from proxy_manager import add_secret
+from handlers import main_keyboard
 
 logger = logging.getLogger(__name__)
-
-
-def main_keyboard():
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Купить прокси", callback_data="buy_proxy")],
-        [InlineKeyboardButton(text="Мои прокси", callback_data="my_proxies")],
-    ])
 
 
 async def handle_yookassa_webhook(request: web.Request) -> web.Response:
@@ -50,12 +43,14 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
         await update_payment_status(payment_id, "succeeded")
 
         telegram_id = payment["telegram_id"]
+        devices = payment.get("devices", 1)
+        months = payment.get("months", 1)
         bot: Bot = request.app["bot"]
 
         raw_secret = generate_raw_secret()
         username = f"tg_{telegram_id}_{raw_secret[:8]}"
 
-        success = await add_secret(username, raw_secret)
+        success = await add_secret(username, raw_secret, max_unique_ips=devices)
         if not success:
             logger.error("Failed to create proxy for user %s", telegram_id)
             await bot.send_message(
@@ -65,7 +60,7 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             return web.Response(status=200)
 
         link_secret = make_tls_link_secret(raw_secret)
-        await add_subscription(telegram_id, raw_secret, username)
+        await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
 
         CE_CONNECT = '<tg-emoji emoji-id="5454386656628991407">🔗</tg-emoji>'
 
@@ -74,7 +69,7 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             telegram_id,
             f"<b>Оплата прошла!</b>\n\n"
             f"{CE_CONNECT} Нажмите для подключения:\n{link}\n\n"
-            f"Подписка активна на 30 дней.",
+            f"Подписка: {devices} устр., {months} мес.",
             parse_mode=ParseMode.HTML,
             reply_markup=main_keyboard(),
         )
