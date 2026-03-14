@@ -21,7 +21,9 @@ jobs:
             which git || apt-get update && apt-get install -y git
 
             if [ ! -d /opt/telemt/.git ]; then
-              git clone https://github.com/theorangecolorv2/proxybot.git /opt/telemt
+              cd /opt/telemt
+              git init
+              git remote add origin https://github.com/theorangecolorv2/proxybot.git
             fi
 
             cd /opt/telemt
