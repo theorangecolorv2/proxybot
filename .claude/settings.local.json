@@ -6,7 +6,13 @@
       "Bash(scp:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(python3 -c:*)"
+      "Bash(python3 -c:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd .gitignore, restore requirements.txt, set up CI/CD\n\n- .gitignore: exclude .env, data/, __pycache__, IDE files\n- requirements.txt: pin all dependencies with aiohttp added\n- GitHub Actions: deploy to server via SSH on push to main\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git branch:*)",
+      "Bash(git reset:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

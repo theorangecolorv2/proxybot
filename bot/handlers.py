@@ -25,13 +25,25 @@ def main_keyboard() -> InlineKeyboardMarkup:
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     await add_user(message.from_user.id, message.from_user.username)
-    await message.answer(
-        f"{CE_ZAP} <b>MTProxy для Telegram</b>\n\n"
-        f"Быстрый и надёжный прокси.\n"
-        f"Подключение в один клик, подписка на 30 дней.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=main_keyboard(),
-    )
+    subs = await get_active_subscriptions(message.from_user.id)
+
+    if subs:
+        sub = subs[0]
+        link_secret = make_tls_link_secret(sub["secret"])
+        link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
+        await message.answer(
+            f"Отличного настроения! 💛\n\n"
+            f"С нами телеграмм всегда доступен! ✈️\n\n"
+            f"Ваш прокси: {link}",
+            reply_markup=main_keyboard(),
+        )
+    else:
+        await message.answer(
+            f"Отличного настроения! 💛\n\n"
+            f"С нами телеграмм всегда доступен! ✈️\n\n"
+            f"Купите подписку, чтобы всегда быть на связи📞",
+            reply_markup=main_keyboard(),
+        )
 
 
 @router.callback_query(F.data == "buy_proxy")
