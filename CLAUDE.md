@@ -46,6 +46,18 @@ bot/
 2. User pays → YooKassa sends webhook → bot creates proxy via telemt API → sends tg://proxy link
 3. Scheduler checks every 5 min for expired subscriptions, removes secrets, notifies users
 
+## CI/CD
+- **GitHub repo**: https://github.com/theorangecolorv2/proxybot.git (public)
+- **Workflow**: `.github/workflows/deploy.yml` — deploys on push to `main`
+- **How it works**: GitHub Actions SSHs into server → `git pull` → `docker compose build && up`
+- **GitHub Secrets needed**: `SERVER_HOST`, `SERVER_USER`, `SSH_PRIVATE_KEY`
+- **No deploy key needed** — repo is public, `git pull` over HTTPS works without auth
+
+## Commit Convention
+- Use short conventional commits: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`
+- No footers, no co-authored-by, no Claude mentions
+- Examples: `feat: add proxy expiration notifications`, `fix: webhook payment status check`
+
 ## Notes
 - Premium custom emoji used in messages (tg-emoji HTML tags). IDs in `/emodji` file at repo root.
 - YooKassa webhook requires HTTPS — blocked until domain with SSL is set up.
