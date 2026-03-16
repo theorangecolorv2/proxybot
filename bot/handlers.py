@@ -10,6 +10,7 @@ from config import PROXY_HOST, PROXY_PORT
 from db import (
     add_user, get_active_subscriptions, create_payment,
     has_used_trial, mark_trial_used, add_subscription,
+    set_referrer, get_referral_count,
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
 from proxy_manager import add_secret
@@ -128,16 +129,41 @@ def duration_keyboard(devices: int) -> InlineKeyboardMarkup:
 
 # --- /start ---
 
-@router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+@router.message(CommandStart(deep_link=True))
+async def cmd_start_deep(message: Message, state: FSMContext):
     await state.clear()
-    await add_user(message.from_user.id, message.from_user.username)
     uid = message.from_user.id
+    await add_user(uid, message.from_user.username)
+
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1 and args[1].startswith("ref_"):
+        try:
+            referrer_id = int(args[1][4:])
+            if referrer_id != uid:
+                await set_referrer(uid, referrer_id)
+        except ValueError:
+            pass
+
     text = (
         f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
         f"С нами телеграмм всегда доступен! {CE_FIRE}"
     )
+    await message.answer(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=await main_keyboard(uid),
+    )
 
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    uid = message.from_user.id
+    await add_user(uid, message.from_user.username)
+    text = (
+        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+        f"С нами телеграмм всегда доступен! {CE_FIRE}"
+    )
     await message.answer(
         text,
         parse_mode=ParseMode.HTML,
@@ -185,11 +211,30 @@ async def trial_period(callback: CallbackQuery):
 
 @router.callback_query(F.data == "referral")
 async def referral_info(callback: CallbackQuery):
-    await callback.message.edit_text(
+    uid = callback.from_user.id
+    bot_me = await callback.bot.me()
+    ref_link = f"https://t.me/{bot_me.username}?start=ref_{uid}"
+    count = await get_referral_count(uid)
+
+    text = (
         f"{CE_EARN} <b>Реферальная программа</b>\n\n"
-        f"Скоро здесь появится реферальная программа! Следите за обновлениями.",
+        f"Приглашай друзей и получай бесплатный прокси! {CE_FIRE}\n\n"
+        f"{CE_LINK} <b>Твоя ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"{CE_HEART} Приглашено друзей: <b>{count}</b>\n\n"
+        f"{CE_ZAP} <b>Бонусы:</b>\n"
+        f"— Друг получает <b>5 дней</b> бесплатного прокси\n"
+        f"— Ты получаешь <b>10 дней</b> бесплатного прокси"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← Назад", callback_data="back_to_menu")],
+    ])
+
+    await callback.message.edit_text(
+        text,
         parse_mode=ParseMode.HTML,
-        reply_markup=await main_keyboard(callback.from_user.id),
+        reply_markup=kb,
     )
     await callback.answer()
 

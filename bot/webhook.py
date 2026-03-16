@@ -10,10 +10,14 @@ from db import (
     get_payment_by_yookassa_id,
     update_payment_status,
     add_subscription,
+    get_referrer,
+    has_referral_rewarded,
+    mark_referral_rewarded,
+    add_referral_subscription,
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
 from proxy_manager import add_secret
-from handlers import main_keyboard, CE_SUCCESS, CE_LINK
+from handlers import main_keyboard, CE_SUCCESS, CE_LINK, CE_EARN, CE_FIRE, CE_CONNECT
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +44,6 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
         if payment["status"] == "succeeded":
             return web.Response(status=200)
 
-        await update_payment_status(payment_id, "succeeded")
-
         telegram_id = payment["telegram_id"]
         devices = payment.get("devices", 1)
         months = payment.get("months", 1)
@@ -59,6 +61,8 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             )
             return web.Response(status=200)
 
+        await update_payment_status(payment_id, "succeeded")
+
         link_secret = make_tls_link_secret(raw_secret)
         await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
 
@@ -72,10 +76,62 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             reply_markup=await main_keyboard(telegram_id),
         )
 
+        # --- Referral bonus ---
+        await _process_referral_bonus(bot, telegram_id)
+
     elif event_type == "payment.canceled":
         await update_payment_status(payment_id, "canceled")
 
     return web.Response(status=200)
+
+
+async def _process_referral_bonus(bot: Bot, telegram_id: int):
+    referrer_id = await get_referrer(telegram_id)
+    if not referrer_id:
+        return
+    if await has_referral_rewarded(telegram_id):
+        return
+
+    # Bonus for invited user — 5 days
+    raw_inv = generate_raw_secret()
+    uname_inv = f"tg_ref_{telegram_id}_{raw_inv[:8]}"
+    ok_inv = await add_secret(uname_inv, raw_inv, max_unique_ips=1)
+    if not ok_inv:
+        logger.error("Failed to create referral proxy for invited user %s, will retry on next payment", telegram_id)
+        return
+
+    await add_referral_subscription(telegram_id, raw_inv, uname_inv, days=5)
+    link_inv = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={make_tls_link_secret(raw_inv)}"
+    try:
+        await bot.send_message(
+            telegram_id,
+            f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
+            f"Вы получили <b>5 дней</b> бесплатного прокси за регистрацию по приглашению! {CE_FIRE}\n\n"
+            f"{CE_CONNECT} Подключиться:\n{link_inv}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        logger.error("Failed to notify invited user %s about referral bonus", telegram_id)
+
+    # Bonus for referrer — 10 days
+    raw_ref = generate_raw_secret()
+    uname_ref = f"tg_ref_{referrer_id}_{raw_ref[:8]}"
+    ok_ref = await add_secret(uname_ref, raw_ref, max_unique_ips=1)
+    if ok_ref:
+        await add_referral_subscription(referrer_id, raw_ref, uname_ref, days=10)
+        link_ref = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={make_tls_link_secret(raw_ref)}"
+        try:
+            await bot.send_message(
+                referrer_id,
+                f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
+                f"Ваш друг оплатил подписку — вы получили <b>10 дней</b> бесплатного прокси! {CE_FIRE}\n\n"
+                f"{CE_CONNECT} Подключиться:\n{link_ref}",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            logger.error("Failed to notify referrer %s about referral bonus", referrer_id)
+
+    await mark_referral_rewarded(telegram_id)
 
 
 async def start_webhook_server(bot: Bot) -> web.AppRunner:

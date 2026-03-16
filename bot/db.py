@@ -42,6 +42,8 @@ async def init_db():
             ("payments", "devices", "INTEGER", 1),
             ("payments", "months", "INTEGER", 1),
             ("users", "trial_used", "INTEGER", 0),
+            ("users", "referred_by", "INTEGER", "NULL"),
+            ("users", "referral_rewarded", "INTEGER", 0),
         ]:
             try:
                 await db.execute(
@@ -106,7 +108,7 @@ async def get_active_subscriptions(telegram_id: int) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT id, secret, username, created_at, expires_at FROM subscriptions WHERE telegram_id = ? AND active = 1",
+            "SELECT id, secret, username, created_at, expires_at, devices, months FROM subscriptions WHERE telegram_id = ? AND active = 1",
             (telegram_id,),
         )
         rows = await cursor.fetchall()
@@ -159,5 +161,66 @@ async def update_payment_status(yookassa_payment_id: str, status: str):
         await db.execute(
             "UPDATE payments SET status = ? WHERE yookassa_payment_id = ?",
             (status, yookassa_payment_id),
+        )
+        await db.commit()
+
+
+# --- Referral ---
+
+async def set_referrer(telegram_id: int, referrer_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET referred_by = ? WHERE telegram_id = ? AND referred_by IS NULL",
+            (referrer_id, telegram_id),
+        )
+        await db.commit()
+
+
+async def get_referrer(telegram_id: int) -> int | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT referred_by FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row and row[0] else None
+
+
+async def get_referral_count(telegram_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM users WHERE referred_by = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def has_referral_rewarded(telegram_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT referral_rewarded FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+        return bool(row and row[0])
+
+
+async def mark_referral_rewarded(telegram_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET referral_rewarded = 1 WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        await db.commit()
+
+
+async def add_referral_subscription(telegram_id: int, secret: str, username: str, days: int):
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(days=days)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO subscriptions (telegram_id, secret, username, created_at, expires_at, active, devices, months) VALUES (?, ?, ?, ?, ?, 1, 1, 0)",
+            (telegram_id, secret, username, now.isoformat(), expires.isoformat()),
         )
         await db.commit()
