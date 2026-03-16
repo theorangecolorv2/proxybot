@@ -36,15 +36,16 @@ async def init_db():
         await db.commit()
 
         # Migrations: add new columns idempotently
-        for table, column, default in [
-            ("subscriptions", "devices", 1),
-            ("subscriptions", "months", 1),
-            ("payments", "devices", 1),
-            ("payments", "months", 1),
+        for table, column, coltype, default in [
+            ("subscriptions", "devices", "INTEGER", 1),
+            ("subscriptions", "months", "INTEGER", 1),
+            ("payments", "devices", "INTEGER", 1),
+            ("payments", "months", "INTEGER", 1),
+            ("users", "trial_used", "INTEGER", 0),
         ]:
             try:
                 await db.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT {default}"
+                    f"ALTER TABLE {table} ADD COLUMN {column} {coltype} DEFAULT {default}"
                 )
                 await db.commit()
             except Exception:
@@ -56,6 +57,36 @@ async def add_user(telegram_id: int, username: str | None):
         await db.execute(
             "INSERT OR IGNORE INTO users (telegram_id, username, created_at) VALUES (?, ?, ?)",
             (telegram_id, username, datetime.now(timezone.utc).isoformat()),
+        )
+        await db.commit()
+
+
+async def has_used_trial(telegram_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT trial_used FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+        return bool(row and row[0])
+
+
+async def mark_trial_used(telegram_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET trial_used = 1 WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        await db.commit()
+
+
+async def add_trial_subscription(telegram_id: int, secret: str, username: str):
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(days=3)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO subscriptions (telegram_id, secret, username, created_at, expires_at, active, devices, months) VALUES (?, ?, ?, ?, ?, 1, 1, 0)",
+            (telegram_id, secret, username, now.isoformat(), expires.isoformat()),
         )
         await db.commit()
 

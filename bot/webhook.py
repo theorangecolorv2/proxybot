@@ -13,7 +13,7 @@ from db import (
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
 from proxy_manager import add_secret
-from handlers import main_keyboard
+from handlers import main_keyboard, CE_SUCCESS, CE_LINK
 
 logger = logging.getLogger(__name__)
 
@@ -62,16 +62,14 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
         link_secret = make_tls_link_secret(raw_secret)
         await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
 
-        CE_CONNECT = '<tg-emoji emoji-id="5454386656628991407">🔗</tg-emoji>'
-
         link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
         await bot.send_message(
             telegram_id,
-            f"<b>Оплата прошла!</b>\n\n"
-            f"{CE_CONNECT} Нажмите для подключения:\n{link}\n\n"
-            f"Подписка: {devices} устр., {months} мес.",
+            f"Оплата успешно прошла! {CE_SUCCESS}\n\n"
+            f"Нажмите на ссылку, далее нажмите подключиться и телеграмм летает! {CE_LINK}\n\n"
+            f"{link}",
             parse_mode=ParseMode.HTML,
-            reply_markup=main_keyboard(),
+            reply_markup=await main_keyboard(telegram_id),
         )
 
     elif event_type == "payment.canceled":

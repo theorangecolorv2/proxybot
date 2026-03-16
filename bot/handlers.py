@@ -7,15 +7,37 @@ from aiogram.enums import ParseMode
 from urllib.parse import quote
 
 from config import PROXY_HOST, PROXY_PORT
-from db import add_user, get_active_subscriptions, create_payment
-from secret_gen import make_tls_link_secret
+from db import (
+    add_user, get_active_subscriptions, create_payment,
+    has_used_trial, mark_trial_used, add_subscription,
+)
+from secret_gen import generate_raw_secret, make_tls_link_secret
+from proxy_manager import add_secret
 from payment import create_yookassa_payment
 from pricing import get_device_price, get_discount, calculate_total
 
 router = Router()
 
-CE_ZAP = '<tg-emoji emoji-id="5219943216781995020">⚡</tg-emoji>'
-CE_CONNECT = '<tg-emoji emoji-id="5454386656628991407">🔗</tg-emoji>'
+# --- Premium custom emoji helpers ---
+
+def ce(emoji_id: str, fallback: str) -> str:
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+CE_ZAP = ce("5219943216781995020", "⚡")
+CE_CONNECT = ce("5454386656628991407", "🔗")
+CE_CART = ce("5346267284518239633", "🛒")
+CE_SUB = ce("5346092874486281349", "⚡")
+CE_SUCCESS = ce("5980930633298350051", "✅")
+CE_LINK = ce("5271604874419647061", "🔗")
+CE_DEVICES = ce("5819062970998590994", "📱")
+CE_DURATION = ce("5346220920346277355", "⏳")
+CE_PRICE = ce("5246762912428603768", "📉")
+CE_DISCOUNT = ce("5406683434124859552", "🏷")
+CE_TOTAL = ce("5231449120635370684", "💸")
+CE_EARN = ce("5283232570660634549", "💰")
+CE_PHONE = ce("5453965363286925977", "📞")
+CE_HEART = ce("5454249887690415056", "❤️")
+CE_FIRE = ce("5222148368955877900", "🔥")
 
 
 class BuyFlow(StatesGroup):
@@ -26,11 +48,21 @@ class BuyFlow(StatesGroup):
     confirming = State()
 
 
-def main_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Купить подписку", callback_data="buy_sub")],
-        [InlineKeyboardButton(text="Мои прокси", callback_data="my_proxies")],
+async def main_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
+    rows = []
+
+    trial_used = await has_used_trial(telegram_id)
+    if not trial_used:
+        rows.append([InlineKeyboardButton(text="🎁 Пробный период", callback_data="trial")])
+
+    rows.append([InlineKeyboardButton(text="🛒 Купить прокси", callback_data="buy_sub")])
+    rows.append([InlineKeyboardButton(text="⚡ Моя подписка", callback_data="my_proxies")])
+    rows.append([
+        InlineKeyboardButton(text="💬 Поддержка", url="https://t.me/ClevVPN_support"),
+        InlineKeyboardButton(text="💰 Реферальная", callback_data="referral"),
     ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def devices_keyboard() -> InlineKeyboardMarkup:
@@ -84,25 +116,79 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await add_user(message.from_user.id, message.from_user.username)
-    subs = await get_active_subscriptions(message.from_user.id)
+    uid = message.from_user.id
+    subs = await get_active_subscriptions(uid)
 
     if subs:
         sub = subs[0]
         link_secret = make_tls_link_secret(sub["secret"])
         link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-        await message.answer(
-            f"Отличного настроения! 💛\n\n"
-            f"С нами телеграмм всегда доступен! ✈️\n\n"
-            f"Ваш прокси: {link}",
-            reply_markup=main_keyboard(),
+        text = (
+            f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+            f"С нами телеграмм всегда доступен! {CE_FIRE}\n\n"
+            f"{CE_CONNECT} Ваш прокси:\n{link}"
         )
     else:
-        await message.answer(
-            f"Отличного настроения! 💛\n\n"
-            f"С нами телеграмм всегда доступен! ✈️\n\n"
-            f"Купите подписку, чтобы всегда быть на связи📞",
-            reply_markup=main_keyboard(),
+        text = (
+            f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+            f"С нами телеграмм всегда доступен! {CE_FIRE}\n\n"
+            f"Купите подписку, чтобы всегда быть на связи {CE_PHONE}"
         )
+
+    await message.answer(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=await main_keyboard(uid),
+    )
+
+
+# --- Trial period ---
+
+@router.callback_query(F.data == "trial")
+async def trial_period(callback: CallbackQuery):
+    uid = callback.from_user.id
+    used = await has_used_trial(uid)
+    if used:
+        await callback.answer("Вы уже использовали пробный период.", show_alert=True)
+        return
+
+    raw_secret = generate_raw_secret()
+    username = f"tg_trial_{uid}_{raw_secret[:8]}"
+
+    success = await add_secret(username, raw_secret, max_unique_ips=1)
+    if not success:
+        await callback.answer("Ошибка при создании прокси. Попробуйте позже.", show_alert=True)
+        return
+
+    link_secret = make_tls_link_secret(raw_secret)
+
+    # Trial = 3 days, stored as 0 months — use special add
+    from db import add_trial_subscription
+    await add_trial_subscription(uid, raw_secret, username)
+    await mark_trial_used(uid)
+
+    link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
+    await callback.message.edit_text(
+        f"Вы успешно оформили пробный период на 3 дня! {CE_SUCCESS}\n\n"
+        f"Нажмите на ссылку и нажмите подключиться, всё! Telegram летает {CE_LINK}\n\n"
+        f"{link}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=await main_keyboard(uid),
+    )
+    await callback.answer()
+
+
+# --- Referral (placeholder) ---
+
+@router.callback_query(F.data == "referral")
+async def referral_info(callback: CallbackQuery):
+    await callback.message.edit_text(
+        f"{CE_EARN} <b>Реферальная программа</b>\n\n"
+        f"Скоро здесь появится реферальная программа! Следите за обновлениями.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=await main_keyboard(callback.from_user.id),
+    )
+    await callback.answer()
 
 
 # --- Step 1: Choose devices ---
@@ -212,13 +298,13 @@ async def show_confirmation(msg, state: FSMContext, devices: int, months: int, e
 
     text = (
         f"<b>Ваш заказ:</b>\n\n"
-        f"Устройств: {devices}\n"
-        f"Срок: {months} мес.\n"
-        f"Цена за месяц: {price_per_month}₽\n"
+        f"{CE_DEVICES} Устройств: {devices}\n\n"
+        f"{CE_DURATION} Срок: {months} мес.\n\n"
+        f"{CE_PRICE} Цена за месяц: {price_per_month}₽\n\n"
     )
     if discount > 0:
-        text += f"Скидка: {discount}%\n"
-    text += f"\n<b>Итого: {total}₽</b>"
+        text += f"{CE_DISCOUNT} Скидка: {discount}%\n\n"
+    text += f"<b>Итого: {total}</b> {CE_TOTAL}"
 
     await state.set_state(BuyFlow.confirming)
     if edit:
@@ -241,7 +327,7 @@ async def confirm_pay(callback: CallbackQuery, state: FSMContext):
     except Exception:
         await callback.message.edit_text(
             "Ошибка при создании платежа. Попробуйте позже.",
-            reply_markup=main_keyboard(),
+            reply_markup=await main_keyboard(telegram_id),
         )
         await state.clear()
         await callback.answer()
@@ -268,10 +354,11 @@ async def confirm_pay(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
+    uid = callback.from_user.id
     await callback.message.edit_text(
-        f"{CE_ZAP} <b>MTProxy для Telegram</b>",
+        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>",
         parse_mode=ParseMode.HTML,
-        reply_markup=main_keyboard(),
+        reply_markup=await main_keyboard(uid),
     )
     await callback.answer()
 
@@ -302,12 +389,13 @@ async def back_to_duration(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "my_proxies")
 async def my_proxies(callback: CallbackQuery):
-    subs = await get_active_subscriptions(callback.from_user.id)
+    uid = callback.from_user.id
+    subs = await get_active_subscriptions(uid)
 
     if not subs:
         await callback.message.edit_text(
             "У вас пока нет активных подписок.",
-            reply_markup=main_keyboard(),
+            reply_markup=await main_keyboard(uid),
         )
         await callback.answer()
         return
@@ -322,6 +410,6 @@ async def my_proxies(callback: CallbackQuery):
     await callback.message.edit_text(
         f"<b>Ваши прокси:</b>\n\n" + "\n\n".join(lines),
         parse_mode=ParseMode.HTML,
-        reply_markup=main_keyboard(),
+        reply_markup=await main_keyboard(uid),
     )
     await callback.answer()
