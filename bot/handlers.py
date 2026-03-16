@@ -53,13 +53,33 @@ async def main_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
 
     trial_used = await has_used_trial(telegram_id)
     if not trial_used:
-        rows.append([InlineKeyboardButton(text="🎁 Пробный период", callback_data="trial")])
+        rows.append([InlineKeyboardButton(
+            text="Пробный период",
+            callback_data="trial",
+            icon_custom_emoji_id="5222148368955877900",  # 🔥
+        )])
 
-    rows.append([InlineKeyboardButton(text="🛒 Купить прокси", callback_data="buy_sub")])
-    rows.append([InlineKeyboardButton(text="⚡ Моя подписка", callback_data="my_proxies")])
+    rows.append([InlineKeyboardButton(
+        text="Купить прокси",
+        callback_data="buy_sub",
+        icon_custom_emoji_id="5258024802010026053",  # 🛒
+    )])
+    rows.append([InlineKeyboardButton(
+        text="Моя подписка",
+        callback_data="my_proxies",
+        icon_custom_emoji_id="5219943216781995020",  # ⚡
+    )])
     rows.append([
-        InlineKeyboardButton(text="💬 Поддержка", url="https://t.me/ClevVPN_support"),
-        InlineKeyboardButton(text="💰 Реферальная", callback_data="referral"),
+        InlineKeyboardButton(
+            text="Поддержка",
+            url="https://t.me/ClevVPN_support",
+            icon_custom_emoji_id="5453965363286925977",  # 📞
+        ),
+        InlineKeyboardButton(
+            text="Реферальная",
+            callback_data="referral",
+            icon_custom_emoji_id="5283232570660634549",  # 💰
+        ),
     ])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -117,23 +137,10 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await add_user(message.from_user.id, message.from_user.username)
     uid = message.from_user.id
-    subs = await get_active_subscriptions(uid)
-
-    if subs:
-        sub = subs[0]
-        link_secret = make_tls_link_secret(sub["secret"])
-        link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-        text = (
-            f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
-            f"С нами телеграмм всегда доступен! {CE_FIRE}\n\n"
-            f"{CE_CONNECT} Ваш прокси:\n{link}"
-        )
-    else:
-        text = (
-            f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
-            f"С нами телеграмм всегда доступен! {CE_FIRE}\n\n"
-            f"Купите подписку, чтобы всегда быть на связи {CE_PHONE}"
-        )
+    text = (
+        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+        f"С нами телеграмм всегда доступен! {CE_FIRE}"
+    )
 
     await message.answer(
         text,
