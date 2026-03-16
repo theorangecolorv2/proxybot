@@ -45,7 +45,6 @@ class BuyFlow(StatesGroup):
     entering_custom_devices = State()
     choosing_duration = State()
     entering_custom_duration = State()
-    confirming = State()
 
 
 async def main_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
@@ -59,8 +58,10 @@ async def main_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
             icon_custom_emoji_id="5222148368955877900",  # 🔥
         )])
 
+    subs = await get_active_subscriptions(telegram_id)
+    buy_text = "Продлить подписку" if subs else "Купить прокси"
     rows.append([InlineKeyboardButton(
-        text="Купить прокси",
+        text=buy_text,
         callback_data="buy_sub",
         icon_custom_emoji_id="5258024802010026053",  # 🛒
     )])
@@ -123,11 +124,6 @@ def duration_keyboard(devices: int) -> InlineKeyboardMarkup:
     ])
 
 
-def confirm_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Оплатить", callback_data="confirm_pay")],
-        [InlineKeyboardButton(text="← Назад", callback_data="back_to_duration")],
-    ])
 
 
 # --- /start ---
@@ -303,6 +299,22 @@ async def show_confirmation(msg, state: FSMContext, devices: int, months: int, e
     discount = get_discount(months)
     price_per_month = get_device_price(devices)
 
+    telegram_id = msg.chat.id if hasattr(msg, 'chat') else msg.from_user.id
+
+    try:
+        result = create_yookassa_payment(telegram_id, devices, months)
+    except Exception:
+        kb = await main_keyboard(telegram_id)
+        if edit:
+            await msg.edit_text("Ошибка при создании платежа. Попробуйте позже.", reply_markup=kb)
+        else:
+            await msg.answer("Ошибка при создании платежа. Попробуйте позже.", reply_markup=kb)
+        await state.clear()
+        return
+
+    await create_payment(telegram_id, result["payment_id"], result["amount"], devices, months)
+    await state.clear()
+
     text = (
         f"<b>Ваш заказ:</b>\n\n"
         f"{CE_DEVICES} Устройств: {devices}\n\n"
@@ -313,47 +325,15 @@ async def show_confirmation(msg, state: FSMContext, devices: int, months: int, e
         text += f"{CE_DISCOUNT} Скидка: {discount}%\n\n"
     text += f"<b>Итого: {total}</b> {CE_TOTAL}"
 
-    await state.set_state(BuyFlow.confirming)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Оплатить", url=result["confirmation_url"])],
+        [InlineKeyboardButton(text="← Назад", callback_data="back_to_menu")],
+    ])
+
     if edit:
-        await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=confirm_keyboard())
+        await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
     else:
-        await msg.answer(text, parse_mode=ParseMode.HTML, reply_markup=confirm_keyboard())
-
-
-# --- Step 3: Confirm & pay ---
-
-@router.callback_query(F.data == "confirm_pay", BuyFlow.confirming)
-async def confirm_pay(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    devices = data["devices"]
-    months = data["months"]
-    telegram_id = callback.from_user.id
-
-    try:
-        result = create_yookassa_payment(telegram_id, devices, months)
-    except Exception:
-        await callback.message.edit_text(
-            "Ошибка при создании платежа. Попробуйте позже.",
-            reply_markup=await main_keyboard(telegram_id),
-        )
-        await state.clear()
-        await callback.answer()
-        return
-
-    await create_payment(telegram_id, result["payment_id"], result["amount"], devices, months)
-    await state.clear()
-
-    total = calculate_total(devices, months)
-    await callback.message.edit_text(
-        f"<b>Прокси: {devices} устр., {months} мес.</b> — {total}₽\n\n"
-        f"После оплаты прокси будет создан автоматически.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Оплатить", url=result["confirmation_url"])],
-            [InlineKeyboardButton(text="← Назад", callback_data="back_to_menu")],
-        ]),
-    )
-    await callback.answer()
+        await msg.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # --- Back buttons ---
@@ -399,10 +379,19 @@ async def my_proxies(callback: CallbackQuery):
     uid = callback.from_user.id
     subs = await get_active_subscriptions(uid)
 
+    proxies_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="Продлить подписку",
+            callback_data="buy_sub",
+            icon_custom_emoji_id="5258024802010026053",  # 🛒
+        )],
+        [InlineKeyboardButton(text="← Назад", callback_data="back_to_menu")],
+    ])
+
     if not subs:
         await callback.message.edit_text(
             "У вас пока нет активных подписок.",
-            reply_markup=await main_keyboard(uid),
+            reply_markup=proxies_kb,
         )
         await callback.answer()
         return
@@ -417,6 +406,6 @@ async def my_proxies(callback: CallbackQuery):
     await callback.message.edit_text(
         f"<b>Ваши прокси:</b>\n\n" + "\n\n".join(lines),
         parse_mode=ParseMode.HTML,
-        reply_markup=await main_keyboard(uid),
+        reply_markup=proxies_kb,
     )
     await callback.answer()
