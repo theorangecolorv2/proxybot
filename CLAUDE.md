@@ -59,6 +59,7 @@ bot/
 - Examples: `feat: add proxy expiration notifications`, `fix: webhook payment status check`
 
 ## Notes
-- Premium custom emoji used in messages (tg-emoji HTML tags). IDs in `/emodji` file at repo root.
+- Premium custom emoji used in messages (tg-emoji HTML tags). IDs catalogued in `design/emodji`.
+- When adding new emoji to bot texts, always check `design/emodji` for existing IDs and add new ones there if discovered.
+- When writing/editing bot message texts, use custom emoji from `design/emodji` via the `ce()` helper in `handlers.py`.
 - YooKassa webhook requires HTTPS — blocked until domain with SSL is set up.
-- Bot uses only two premium emoji: ⚡ (header) and 🔗 (connect, for proxy links).
