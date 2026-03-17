@@ -441,15 +441,25 @@ async def my_proxies(callback: CallbackQuery):
         await callback.answer()
         return
 
-    lines = []
-    for i, sub in enumerate(subs, 1):
-        link_secret = make_tls_link_secret(sub["secret"])
-        link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-        expires = sub["expires_at"][:10]
-        lines.append(f"{CE_CONNECT} Прокси #{i} — до {expires}\n{link}")
+    # Show the latest-expiring subscription
+    sub = max(subs, key=lambda s: s["expires_at"])
+    link_secret = make_tls_link_secret(sub["secret"])
+    link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
+    expires_raw = sub["expires_at"][:10]  # "YYYY-MM-DD"
+    expires_fmt = f"{expires_raw[8:10]}.{expires_raw[5:7]}.{expires_raw[:4]}"
+    devices = sub.get("devices", 1)
+
+    text = (
+        f"<b>Ваша подписка:</b>\n\n"
+        f"Статус подписки: активна {CE_SUCCESS}\n\n"
+        f"Дата конца подписки: {expires_fmt} {CE_DURATION}\n\n"
+        f"Устройств: {devices} {CE_DEVICES}\n\n"
+        f"Ссылка: {link} {CE_LINK}\n\n"
+        f"Нажмите на ссылку, затем нажмите подключиться {CE_SUCCESS}"
+    )
 
     await callback.message.edit_text(
-        f"<b>Ваши прокси:</b>\n\n" + "\n\n".join(lines),
+        text,
         parse_mode=ParseMode.HTML,
         reply_markup=proxies_kb,
     )

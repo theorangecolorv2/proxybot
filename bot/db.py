@@ -115,6 +115,44 @@ async def get_active_subscriptions(telegram_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+async def get_active_subscription(telegram_id: int) -> dict | None:
+    """Get the latest-expiring active subscription for a user."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, secret, username, created_at, expires_at, devices, months FROM subscriptions WHERE telegram_id = ? AND active = 1 ORDER BY expires_at DESC LIMIT 1",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def extend_subscription(sub_id: int, months: int, devices: int | None = None):
+    """Extend an existing subscription by N months. Optionally update devices count."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT expires_at FROM subscriptions WHERE id = ?", (sub_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return
+        current_expires = datetime.fromisoformat(row[0])
+        now = datetime.now(timezone.utc)
+        # If already expired, extend from now; otherwise extend from current expiry
+        base = max(current_expires, now)
+        new_expires = base + timedelta(days=months * 30)
+        updates = "expires_at = ?"
+        params: list = [new_expires.isoformat()]
+        if devices is not None:
+            updates += ", devices = ?"
+            params.append(devices)
+        params.append(sub_id)
+        await db.execute(
+            f"UPDATE subscriptions SET {updates} WHERE id = ?", params,
+        )
+        await db.commit()
+
+
 async def get_expired_subscriptions() -> list[dict]:
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:

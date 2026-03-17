@@ -10,6 +10,8 @@ from db import (
     get_payment_by_yookassa_id,
     update_payment_status,
     add_subscription,
+    get_active_subscription,
+    extend_subscription,
     get_referrer,
     has_referral_rewarded,
     mark_referral_rewarded,
@@ -49,32 +51,51 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
         months = payment.get("months", 1)
         bot: Bot = request.app["bot"]
 
-        raw_secret = generate_raw_secret()
-        username = f"tg_{telegram_id}_{raw_secret[:8]}"
+        existing_sub = await get_active_subscription(telegram_id)
 
-        success = await add_secret(username, raw_secret, max_unique_ips=devices)
-        if not success:
-            logger.error("Failed to create proxy for user %s", telegram_id)
+        if existing_sub:
+            # Extend existing subscription — same secret, same link
+            await extend_subscription(existing_sub["id"], months, devices=devices)
+            await update_payment_status(payment_id, "succeeded")
+
+            link_secret = make_tls_link_secret(existing_sub["secret"])
+            link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
             await bot.send_message(
                 telegram_id,
-                "Оплата прошла, но произошла ошибка при создании прокси. Обратитесь в поддержку.",
+                f"Оплата успешно прошла! Подписка продлена {CE_SUCCESS}\n\n"
+                f"Ваша ссылка не изменилась {CE_LINK}\n\n"
+                f"{link}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=await main_keyboard(telegram_id),
             )
-            return web.Response(status=200)
+        else:
+            # New subscription — create proxy secret
+            raw_secret = generate_raw_secret()
+            username = f"tg_{telegram_id}_{raw_secret[:8]}"
 
-        await update_payment_status(payment_id, "succeeded")
+            success = await add_secret(username, raw_secret, max_unique_ips=devices)
+            if not success:
+                logger.error("Failed to create proxy for user %s", telegram_id)
+                await bot.send_message(
+                    telegram_id,
+                    "Оплата прошла, но произошла ошибка при создании прокси. Обратитесь в поддержку.",
+                )
+                return web.Response(status=200)
 
-        link_secret = make_tls_link_secret(raw_secret)
-        await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
+            await update_payment_status(payment_id, "succeeded")
 
-        link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-        await bot.send_message(
-            telegram_id,
-            f"Оплата успешно прошла! {CE_SUCCESS}\n\n"
-            f"Нажмите на ссылку, далее нажмите подключиться и телеграмм летает! {CE_LINK}\n\n"
-            f"{link}",
-            parse_mode=ParseMode.HTML,
-            reply_markup=await main_keyboard(telegram_id),
-        )
+            link_secret = make_tls_link_secret(raw_secret)
+            await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
+
+            link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
+            await bot.send_message(
+                telegram_id,
+                f"Оплата успешно прошла! {CE_SUCCESS}\n\n"
+                f"Нажмите на ссылку, далее нажмите подключиться и телеграмм летает! {CE_LINK}\n\n"
+                f"{link}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=await main_keyboard(telegram_id),
+            )
 
         # --- Referral bonus ---
         await _process_referral_bonus(bot, telegram_id)
