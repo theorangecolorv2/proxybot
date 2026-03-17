@@ -33,6 +33,15 @@ async def init_db():
                 created_at TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS notifications_sent (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscription_id INTEGER,
+                notification_type TEXT,
+                sent_at TEXT,
+                UNIQUE(subscription_id, notification_type)
+            )
+        """)
         await db.commit()
 
         # Migrations: add new columns idempotently
@@ -259,5 +268,35 @@ async def add_referral_subscription(telegram_id: int, secret: str, username: str
         await db.execute(
             "INSERT INTO subscriptions (telegram_id, secret, username, created_at, expires_at, active, devices, months) VALUES (?, ?, ?, ?, ?, 1, 1, 0)",
             (telegram_id, secret, username, now.isoformat(), expires.isoformat()),
+        )
+        await db.commit()
+
+
+# --- Notifications ---
+
+async def get_all_active_subscriptions() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, telegram_id, expires_at FROM subscriptions WHERE active = 1",
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def was_notification_sent(subscription_id: int, notification_type: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM notifications_sent WHERE subscription_id = ? AND notification_type = ?",
+            (subscription_id, notification_type),
+        )
+        return await cursor.fetchone() is not None
+
+
+async def mark_notification_sent(subscription_id: int, notification_type: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO notifications_sent (subscription_id, notification_type, sent_at) VALUES (?, ?, ?)",
+            (subscription_id, notification_type, datetime.now(timezone.utc).isoformat()),
         )
         await db.commit()
