@@ -15,3 +15,9 @@ async def remove_secret(username: str) -> bool:
     async with aiohttp.ClientSession() as session:
         async with session.delete(url) as resp:
             return resp.status in (200, 204)
+
+
+async def update_secret_ips(username: str, secret: str, max_unique_ips: int) -> bool:
+    """Re-create secret with new max_unique_ips (remove + add)."""
+    await remove_secret(username)
+    return await add_secret(username, secret, max_unique_ips)

@@ -15,11 +15,10 @@ from db import (
     get_referrer,
     has_referral_rewarded,
     mark_referral_rewarded,
-    add_referral_subscription,
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
-from proxy_manager import add_secret
-from handlers import main_keyboard, CE_SUCCESS, CE_LINK, CE_EARN, CE_FIRE, CE_CONNECT
+from proxy_manager import add_secret, update_secret_ips
+from handlers import main_keyboard, CE_SUCCESS, CE_LINK, CE_EARN, CE_FIRE
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,10 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
 
         if existing_sub:
             # Extend existing subscription — same secret, same link
-            await extend_subscription(existing_sub["id"], months, devices=devices)
+            old_devices = existing_sub.get("devices", 1)
+            if devices > old_devices:
+                await update_secret_ips(existing_sub["username"], existing_sub["secret"], devices)
+            await extend_subscription(existing_sub["id"], months=months, devices=devices)
             await update_payment_status(payment_id, "succeeded")
 
             link_secret = make_tls_link_secret(existing_sub["secret"])
@@ -113,44 +115,48 @@ async def _process_referral_bonus(bot: Bot, telegram_id: int):
     if await has_referral_rewarded(telegram_id):
         return
 
-    # Bonus for invited user — 5 days
-    raw_inv = generate_raw_secret()
-    uname_inv = f"tg_ref_{telegram_id}_{raw_inv[:8]}"
-    ok_inv = await add_secret(uname_inv, raw_inv, max_unique_ips=1)
-    if not ok_inv:
-        logger.error("Failed to create referral proxy for invited user %s, will retry on next payment", telegram_id)
-        return
-
-    await add_referral_subscription(telegram_id, raw_inv, uname_inv, days=5)
-    link_inv = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={make_tls_link_secret(raw_inv)}"
-    try:
-        await bot.send_message(
-            telegram_id,
-            f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
-            f"Вы получили <b>5 дней</b> бесплатного прокси за регистрацию по приглашению! {CE_FIRE}\n\n"
-            f"{CE_CONNECT} Подключиться:\n{link_inv}",
-            parse_mode=ParseMode.HTML,
-        )
-    except Exception:
-        logger.error("Failed to notify invited user %s about referral bonus", telegram_id)
-
-    # Bonus for referrer — 10 days
-    raw_ref = generate_raw_secret()
-    uname_ref = f"tg_ref_{referrer_id}_{raw_ref[:8]}"
-    ok_ref = await add_secret(uname_ref, raw_ref, max_unique_ips=1)
-    if ok_ref:
-        await add_referral_subscription(referrer_id, raw_ref, uname_ref, days=10)
-        link_ref = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={make_tls_link_secret(raw_ref)}"
+    # Bonus for invited user — +5 days to their subscription
+    inv_sub = await get_active_subscription(telegram_id)
+    if inv_sub:
+        await extend_subscription(inv_sub["id"], days=5)
         try:
             await bot.send_message(
-                referrer_id,
+                telegram_id,
                 f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
-                f"Ваш друг оплатил подписку — вы получили <b>10 дней</b> бесплатного прокси! {CE_FIRE}\n\n"
-                f"{CE_CONNECT} Подключиться:\n{link_ref}",
+                f"Вы получили <b>+5 дней</b> к подписке за регистрацию по приглашению! {CE_FIRE}",
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
-            logger.error("Failed to notify referrer %s about referral bonus", referrer_id)
+            logger.error("Failed to notify invited user %s about referral bonus", telegram_id)
+
+    # Bonus for referrer — +10 days to their subscription
+    ref_sub = await get_active_subscription(referrer_id)
+    if ref_sub:
+        await extend_subscription(ref_sub["id"], days=10)
+    else:
+        # No active subscription — create a new one with 10 bonus days
+        raw_ref = generate_raw_secret()
+        uname_ref = f"tg_{referrer_id}_{raw_ref[:8]}"
+        ok_ref = await add_secret(uname_ref, raw_ref, max_unique_ips=1)
+        if not ok_ref:
+            logger.error("Failed to create referral proxy for referrer %s", referrer_id)
+            await mark_referral_rewarded(telegram_id)
+            return
+        await add_subscription(referrer_id, raw_ref, uname_ref, devices=1, months=0)
+        # add_subscription creates with 0 months (0 days), now extend by 10 days
+        new_sub = await get_active_subscription(referrer_id)
+        if new_sub:
+            await extend_subscription(new_sub["id"], days=10)
+
+    try:
+        await bot.send_message(
+            referrer_id,
+            f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
+            f"Ваш друг оплатил подписку — вы получили <b>+10 дней</b> к подписке! {CE_FIRE}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        logger.error("Failed to notify referrer %s about referral bonus", referrer_id)
 
     await mark_referral_rewarded(telegram_id)
 

@@ -388,7 +388,8 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     uid = callback.from_user.id
     await callback.message.edit_text(
-        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>",
+        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+        f"С нами телеграмм всегда доступен! {CE_FIRE}",
         parse_mode=ParseMode.HTML,
         reply_markup=await main_keyboard(uid),
     )

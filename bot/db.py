@@ -127,8 +127,8 @@ async def get_active_subscription(telegram_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-async def extend_subscription(sub_id: int, months: int, devices: int | None = None):
-    """Extend an existing subscription by N months. Optionally update devices count."""
+async def extend_subscription(sub_id: int, months: int = 0, days: int = 0, devices: int | None = None):
+    """Extend an existing subscription by N months and/or days. Optionally update devices count."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "SELECT expires_at FROM subscriptions WHERE id = ?", (sub_id,),
@@ -138,9 +138,8 @@ async def extend_subscription(sub_id: int, months: int, devices: int | None = No
             return
         current_expires = datetime.fromisoformat(row[0])
         now = datetime.now(timezone.utc)
-        # If already expired, extend from now; otherwise extend from current expiry
         base = max(current_expires, now)
-        new_expires = base + timedelta(days=months * 30)
+        new_expires = base + timedelta(days=months * 30 + days)
         updates = "expires_at = ?"
         params: list = [new_expires.isoformat()]
         if devices is not None:
