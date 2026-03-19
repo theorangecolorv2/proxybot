@@ -157,7 +157,7 @@ async def cmd_start_deep(message: Message, state: FSMContext):
             pass
 
     text = (
-        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+        f"{CE_ZAP} <b>Проксиль — Прокси для Telegram</b>\n\n"
         f"С нами телеграмм всегда доступен! {CE_FIRE}"
     )
     await message.answer_photo(
@@ -174,7 +174,7 @@ async def cmd_start(message: Message, state: FSMContext):
     uid = message.from_user.id
     await add_user(uid, message.from_user.username)
     text = (
-        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+        f"{CE_ZAP} <b>Проксиль — Прокси для Telegram</b>\n\n"
         f"С нами телеграмм всегда доступен! {CE_FIRE}"
     )
     await message.answer_photo(
@@ -409,7 +409,7 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
     await callback.message.edit_media(
         _cover_media(
-            f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+            f"{CE_ZAP} <b>Проксиль — Прокси для Telegram</b>\n\n"
             f"С нами телеграмм всегда доступен! {CE_FIRE}"
         ),
         reply_markup=await main_keyboard(uid),
