@@ -18,7 +18,7 @@ from db import (
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
 from proxy_manager import add_secret, update_secret_ips
-from handlers import main_keyboard, CE_SUCCESS, CE_LINK, CE_EARN, CE_FIRE
+from handlers import main_keyboard, CE_SUCCESS, CE_LINK, CE_EARN, CE_FIRE, _cover
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,14 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
 
             link_secret = make_tls_link_secret(existing_sub["secret"])
             link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-            await bot.send_message(
+            await bot.send_photo(
                 telegram_id,
-                f"Оплата успешно прошла! Подписка продлена {CE_SUCCESS}\n\n"
-                f"Ваша ссылка не изменилась {CE_LINK}\n\n"
-                f"{link}",
+                _cover(),
+                caption=(
+                    f"Оплата успешно прошла! Подписка продлена {CE_SUCCESS}\n\n"
+                    f"Ваша ссылка не изменилась {CE_LINK}\n\n"
+                    f"{link}"
+                ),
                 parse_mode=ParseMode.HTML,
                 reply_markup=await main_keyboard(telegram_id),
             )
@@ -78,9 +81,10 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             success = await add_secret(username, raw_secret, max_unique_ips=devices)
             if not success:
                 logger.error("Failed to create proxy for user %s", telegram_id)
-                await bot.send_message(
+                await bot.send_photo(
                     telegram_id,
-                    "Оплата прошла, но произошла ошибка при создании прокси. Обратитесь в поддержку.",
+                    _cover(),
+                    caption="Оплата прошла, но произошла ошибка при создании прокси. Обратитесь в поддержку.",
                 )
                 return web.Response(status=200)
 
@@ -90,11 +94,14 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
             await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
 
             link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-            await bot.send_message(
+            await bot.send_photo(
                 telegram_id,
-                f"Оплата успешно прошла! {CE_SUCCESS}\n\n"
-                f"Нажмите на ссылку, далее нажмите подключиться и телеграмм летает! {CE_LINK}\n\n"
-                f"{link}",
+                _cover(),
+                caption=(
+                    f"Оплата успешно прошла! {CE_SUCCESS}\n\n"
+                    f"Нажмите на ссылку, далее нажмите подключиться и телеграмм летает! {CE_LINK}\n\n"
+                    f"{link}"
+                ),
                 parse_mode=ParseMode.HTML,
                 reply_markup=await main_keyboard(telegram_id),
             )
@@ -120,10 +127,13 @@ async def _process_referral_bonus(bot: Bot, telegram_id: int):
     if inv_sub:
         await extend_subscription(inv_sub["id"], days=5)
         try:
-            await bot.send_message(
+            await bot.send_photo(
                 telegram_id,
-                f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
-                f"Вы получили <b>+5 дней</b> к подписке за регистрацию по приглашению! {CE_FIRE}",
+                _cover(),
+                caption=(
+                    f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
+                    f"Вы получили <b>+5 дней</b> к подписке за регистрацию по приглашению! {CE_FIRE}"
+                ),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
@@ -149,10 +159,13 @@ async def _process_referral_bonus(bot: Bot, telegram_id: int):
             await extend_subscription(new_sub["id"], days=10)
 
     try:
-        await bot.send_message(
+        await bot.send_photo(
             referrer_id,
-            f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
-            f"Ваш друг оплатил подписку — вы получили <b>+10 дней</b> к подписке! {CE_FIRE}",
+            _cover(),
+            caption=(
+                f"{CE_EARN} <b>Реферальный бонус!</b>\n\n"
+                f"Ваш друг оплатил подписку — вы получили <b>+10 дней</b> к подписке! {CE_FIRE}"
+            ),
             parse_mode=ParseMode.HTML,
         )
     except Exception:

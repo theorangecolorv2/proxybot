@@ -10,7 +10,7 @@ from db import (
     get_all_active_subscriptions, was_notification_sent, mark_notification_sent,
 )
 from proxy_manager import remove_secret
-from handlers import CE_ZAP, CE_FIRE, CE_SUCCESS
+from handlers import CE_ZAP, CE_FIRE, CE_SUCCESS, _cover
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,14 @@ async def cleanup_expired(bot: Bot):
         if not await was_notification_sent(sub["id"], "expired"):
             await mark_notification_sent(sub["id"], "expired")
             try:
-                await bot.send_message(
+                await bot.send_photo(
                     sub["telegram_id"],
-                    f"{CE_ZAP} Ваша подписка закончилась\n\n"
-                    f"Мы скучаем! Будем рады видеть вас снова {CE_FIRE}\n"
-                    f"Продлите подписку, и всё заработает как прежде {CE_SUCCESS}",
+                    _cover(),
+                    caption=(
+                        f"{CE_ZAP} Ваша подписка закончилась\n\n"
+                        f"Мы скучаем! Будем рады видеть вас снова {CE_FIRE}\n"
+                        f"Продлите подписку, и всё заработает как прежде {CE_SUCCESS}"
+                    ),
                     parse_mode=ParseMode.HTML,
                     reply_markup=RENEW_KB,
                 )
@@ -92,9 +95,10 @@ async def check_expiry_notifications(bot: Bot):
         if notif_type and not await was_notification_sent(sub["id"], notif_type):
             await mark_notification_sent(sub["id"], notif_type)
             try:
-                await bot.send_message(
+                await bot.send_photo(
                     sub["telegram_id"],
-                    text,
+                    _cover(),
+                    caption=text,
                     parse_mode=ParseMode.HTML,
                     reply_markup=RENEW_KB,
                 )

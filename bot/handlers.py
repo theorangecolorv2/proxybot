@@ -2,9 +2,10 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, InputMediaPhoto
 from aiogram.enums import ParseMode
 from urllib.parse import quote
+import os
 
 from config import PROXY_HOST, PROXY_PORT
 from db import (
@@ -39,6 +40,17 @@ CE_EARN = ce("5283232570660634549", "💰")
 CE_PHONE = ce("5453965363286925977", "📞")
 CE_HEART = ce("5454249887690415056", "❤️")
 CE_FIRE = ce("5222148368955877900", "🔥")
+
+
+COVER_PHOTO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cover.png")
+
+
+def _cover():
+    return FSInputFile(COVER_PHOTO)
+
+
+def _cover_media(text: str) -> InputMediaPhoto:
+    return InputMediaPhoto(media=_cover(), caption=text, parse_mode=ParseMode.HTML)
 
 
 class BuyFlow(StatesGroup):
@@ -148,8 +160,9 @@ async def cmd_start_deep(message: Message, state: FSMContext):
         f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
         f"С нами телеграмм всегда доступен! {CE_FIRE}"
     )
-    await message.answer(
-        text,
+    await message.answer_photo(
+        _cover(),
+        caption=text,
         parse_mode=ParseMode.HTML,
         reply_markup=await main_keyboard(uid),
     )
@@ -164,8 +177,9 @@ async def cmd_start(message: Message, state: FSMContext):
         f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
         f"С нами телеграмм всегда доступен! {CE_FIRE}"
     )
-    await message.answer(
-        text,
+    await message.answer_photo(
+        _cover(),
+        caption=text,
         parse_mode=ParseMode.HTML,
         reply_markup=await main_keyboard(uid),
     )
@@ -197,11 +211,12 @@ async def trial_period(callback: CallbackQuery):
     await mark_trial_used(uid)
 
     link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-    await callback.message.edit_text(
-        f"Вы успешно оформили пробный период на 3 дня! {CE_SUCCESS}\n\n"
-        f"Нажмите на ссылку и нажмите подключиться, всё! Telegram летает {CE_LINK}\n\n"
-        f"{link}",
-        parse_mode=ParseMode.HTML,
+    await callback.message.edit_media(
+        _cover_media(
+            f"Вы успешно оформили пробный период на 3 дня! {CE_SUCCESS}\n\n"
+            f"Нажмите на ссылку и нажмите подключиться, всё! Telegram летает {CE_LINK}\n\n"
+            f"{link}"
+        ),
         reply_markup=await main_keyboard(uid),
     )
     await callback.answer()
@@ -231,9 +246,8 @@ async def referral_info(callback: CallbackQuery):
         [InlineKeyboardButton(text="← Назад", callback_data="back_to_menu")],
     ])
 
-    await callback.message.edit_text(
-        text,
-        parse_mode=ParseMode.HTML,
+    await callback.message.edit_media(
+        _cover_media(text),
         reply_markup=kb,
     )
     await callback.answer()
@@ -244,8 +258,8 @@ async def referral_info(callback: CallbackQuery):
 @router.callback_query(F.data == "buy_sub")
 async def buy_sub(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BuyFlow.choosing_devices)
-    await callback.message.edit_text(
-        "Выберите количество устройств:",
+    await callback.message.edit_media(
+        _cover_media("Выберите количество устройств:"),
         reply_markup=devices_keyboard(),
     )
     await callback.answer()
@@ -256,8 +270,8 @@ async def pick_device_count(callback: CallbackQuery, state: FSMContext):
     count_str = callback.data.split("_")[1]
     if count_str == "custom":
         await state.set_state(BuyFlow.entering_custom_devices)
-        await callback.message.edit_text(
-            "Введите количество устройств (от 1 до 100):",
+        await callback.message.edit_media(
+            _cover_media("Введите количество устройств (от 1 до 100):"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="← Назад", callback_data="back_to_devices")],
             ]),
@@ -268,8 +282,8 @@ async def pick_device_count(callback: CallbackQuery, state: FSMContext):
     devices = int(count_str)
     await state.update_data(devices=devices)
     await state.set_state(BuyFlow.choosing_duration)
-    await callback.message.edit_text(
-        f"Устройств: {devices}\nВыберите срок подписки:",
+    await callback.message.edit_media(
+        _cover_media(f"Устройств: {devices}\nВыберите срок подписки:"),
         reply_markup=duration_keyboard(devices),
     )
     await callback.answer()
@@ -279,8 +293,10 @@ async def pick_device_count(callback: CallbackQuery, state: FSMContext):
 async def enter_custom_devices(message: Message, state: FSMContext):
     text = message.text.strip() if message.text else ""
     if not text.isdigit() or not (1 <= int(text) <= 100):
-        await message.answer(
-            "Введите число от 1 до 100:",
+        await message.answer_photo(
+            _cover(),
+            caption="Введите число от 1 до 100:",
+            parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="← Назад", callback_data="back_to_devices")],
             ]),
@@ -290,8 +306,10 @@ async def enter_custom_devices(message: Message, state: FSMContext):
     devices = int(text)
     await state.update_data(devices=devices)
     await state.set_state(BuyFlow.choosing_duration)
-    await message.answer(
-        f"Устройств: {devices}\nВыберите срок подписки:",
+    await message.answer_photo(
+        _cover(),
+        caption=f"Устройств: {devices}\nВыберите срок подписки:",
+        parse_mode=ParseMode.HTML,
         reply_markup=duration_keyboard(devices),
     )
 
@@ -303,8 +321,8 @@ async def pick_duration(callback: CallbackQuery, state: FSMContext):
     dur_str = callback.data.split("_")[1]
     if dur_str == "custom":
         await state.set_state(BuyFlow.entering_custom_duration)
-        await callback.message.edit_text(
-            "Введите количество месяцев (от 1 до 36):",
+        await callback.message.edit_media(
+            _cover_media("Введите количество месяцев (от 1 до 36):"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="← Назад", callback_data="back_to_duration")],
             ]),
@@ -324,8 +342,10 @@ async def pick_duration(callback: CallbackQuery, state: FSMContext):
 async def enter_custom_duration(message: Message, state: FSMContext):
     text = message.text.strip() if message.text else ""
     if not text.isdigit() or not (1 <= int(text) <= 36):
-        await message.answer(
-            "Введите число от 1 до 36:",
+        await message.answer_photo(
+            _cover(),
+            caption="Введите число от 1 до 36:",
+            parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="← Назад", callback_data="back_to_duration")],
             ]),
@@ -351,9 +371,9 @@ async def show_confirmation(msg, state: FSMContext, devices: int, months: int, e
     except Exception:
         kb = await main_keyboard(telegram_id)
         if edit:
-            await msg.edit_text("Ошибка при создании платежа. Попробуйте позже.", reply_markup=kb)
+            await msg.edit_media(_cover_media("Ошибка при создании платежа. Попробуйте позже."), reply_markup=kb)
         else:
-            await msg.answer("Ошибка при создании платежа. Попробуйте позже.", reply_markup=kb)
+            await msg.answer_photo(_cover(), caption="Ошибка при создании платежа. Попробуйте позже.", parse_mode=ParseMode.HTML, reply_markup=kb)
         await state.clear()
         return
 
@@ -376,9 +396,9 @@ async def show_confirmation(msg, state: FSMContext, devices: int, months: int, e
     ])
 
     if edit:
-        await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await msg.edit_media(_cover_media(text), reply_markup=kb)
     else:
-        await msg.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await msg.answer_photo(_cover(), caption=text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # --- Back buttons ---
@@ -387,10 +407,11 @@ async def show_confirmation(msg, state: FSMContext, devices: int, months: int, e
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     uid = callback.from_user.id
-    await callback.message.edit_text(
-        f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
-        f"С нами телеграмм всегда доступен! {CE_FIRE}",
-        parse_mode=ParseMode.HTML,
+    await callback.message.edit_media(
+        _cover_media(
+            f"{CE_ZAP} <b>ClevVPN — Прокси для Telegram</b>\n\n"
+            f"С нами телеграмм всегда доступен! {CE_FIRE}"
+        ),
         reply_markup=await main_keyboard(uid),
     )
     await callback.answer()
@@ -399,8 +420,8 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "back_to_devices")
 async def back_to_devices(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BuyFlow.choosing_devices)
-    await callback.message.edit_text(
-        "Выберите количество устройств:",
+    await callback.message.edit_media(
+        _cover_media("Выберите количество устройств:"),
         reply_markup=devices_keyboard(),
     )
     await callback.answer()
@@ -411,8 +432,8 @@ async def back_to_duration(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     devices = data.get("devices", 1)
     await state.set_state(BuyFlow.choosing_duration)
-    await callback.message.edit_text(
-        f"Устройств: {devices}\nВыберите срок подписки:",
+    await callback.message.edit_media(
+        _cover_media(f"Устройств: {devices}\nВыберите срок подписки:"),
         reply_markup=duration_keyboard(devices),
     )
     await callback.answer()
@@ -435,8 +456,8 @@ async def my_proxies(callback: CallbackQuery):
     ])
 
     if not subs:
-        await callback.message.edit_text(
-            "У вас пока нет активных подписок.",
+        await callback.message.edit_media(
+            _cover_media("У вас пока нет активных подписок."),
             reply_markup=proxies_kb,
         )
         await callback.answer()
@@ -459,9 +480,8 @@ async def my_proxies(callback: CallbackQuery):
         f"Нажмите на ссылку, затем нажмите подключиться {CE_SUCCESS}"
     )
 
-    await callback.message.edit_text(
-        text,
-        parse_mode=ParseMode.HTML,
+    await callback.message.edit_media(
+        _cover_media(text),
         reply_markup=proxies_kb,
     )
     await callback.answer()
