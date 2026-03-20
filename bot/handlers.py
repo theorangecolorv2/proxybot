@@ -40,6 +40,8 @@ CE_EARN = ce("5283232570660634549", "💰")
 CE_PHONE = ce("5453965363286925977", "📞")
 CE_HEART = ce("5454249887690415056", "❤️")
 CE_FIRE = ce("5222148368955877900", "🔥")
+CE_POINT = ce("5832572966721818453", "👉")
+CE_INSTR = ce("5877465816030515018", "🔗")
 
 
 COVER_PHOTO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cover.png")
@@ -452,6 +454,11 @@ async def my_proxies(callback: CallbackQuery):
             callback_data="buy_sub",
             icon_custom_emoji_id="5258024802010026053",  # 🛒
         )],
+        [InlineKeyboardButton(
+            text="Инструкция",
+            callback_data="instruction",
+            icon_custom_emoji_id="5877465816030515018",  # 🔗
+        )],
         [InlineKeyboardButton(text="← Назад", callback_data="back_to_menu")],
     ])
 
@@ -477,11 +484,37 @@ async def my_proxies(callback: CallbackQuery):
         f"Дата конца подписки: {expires_fmt} {CE_DURATION}\n\n"
         f"Устройств: {devices} {CE_DEVICES}\n\n"
         f"Ссылка: {link} {CE_LINK}\n\n"
-        f"Нажмите на ссылку, затем нажмите подключиться {CE_SUCCESS}"
+        f"Нажмите на ссылку, затем нажмите подключиться {CE_POINT}"
     )
 
     await callback.message.edit_media(
         _cover_media(text),
         reply_markup=proxies_kb,
+    )
+    await callback.answer()
+
+
+# --- Instruction ---
+
+@router.callback_query(F.data == "instruction")
+async def instruction(callback: CallbackQuery):
+    text = (
+        f'<a href="https://telegra.ph/CHto-delat-esli-visit-obnovlenie-na-IOS-03-19">'
+        f"Что делать если висит обновление(updating) при входе на ios</a>{CE_INSTR}\n\n"
+        f'<a href="https://telegra.ph/CHto-delat-esli-visit-obnovlenie-na-Android-03-19">'
+        f"Что делать если висит обновление(updating) при входе на android</a>{CE_INSTR}\n\n"
+        f'<a href="https://telegra.ph/Kak-otklyuchit-proksi-03-19">'
+        f"Как отключить прокси</a>{CE_INSTR}\n\n"
+        f"‼️Прокси не работает одновременно с VPN. Если у вас есть VPN, "
+        f"то отключайте, перед тем как зайти в телеграмм‼️"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← Назад", callback_data="my_proxies")],
+    ])
+
+    await callback.message.edit_media(
+        _cover_media(text),
+        reply_markup=kb,
     )
     await callback.answer()
