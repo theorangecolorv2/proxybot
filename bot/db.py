@@ -300,3 +300,37 @@ async def mark_notification_sent(subscription_id: int, notification_type: str):
             (subscription_id, notification_type, datetime.now(timezone.utc).isoformat()),
         )
         await db.commit()
+
+
+# --- Admin stats ---
+
+async def get_users_count() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM users")
+        row = await cursor.fetchone()
+        return row[0]
+
+
+async def get_active_subscriptions_count() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1")
+        row = await cursor.fetchone()
+        return row[0]
+
+
+async def get_payments_stats() -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
+        row = await cursor.fetchone()
+        paid_count = row[0]
+        cursor = await db.execute("SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM payments WHERE status = 'succeeded'")
+        row = await cursor.fetchone()
+        total_revenue = row[0]
+        return {"paid_count": paid_count, "total_revenue": total_revenue}
+
+
+async def get_all_user_ids() -> list[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT telegram_id FROM users ORDER BY rowid")
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]

@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from config import BOT_TOKEN
 from db import init_db
 from handlers import router
+from admin import router as admin_router
 from scheduler import setup_scheduler
 from webhook import start_webhook_server
 
@@ -16,6 +17,7 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
+    dp.include_router(admin_router)
     dp.include_router(router)
 
     scheduler = setup_scheduler(bot)
