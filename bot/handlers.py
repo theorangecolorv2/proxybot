@@ -12,6 +12,8 @@ from db import (
     add_user, get_active_subscriptions, create_payment,
     has_used_trial, mark_trial_used, add_subscription,
     set_referrer, get_referral_count,
+    get_marketing_link_by_code, increment_marketing_clicks,
+    set_user_marketing_link,
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
 from proxy_manager import add_secret
@@ -150,13 +152,21 @@ async def cmd_start_deep(message: Message, state: FSMContext):
     await add_user(uid, message.from_user.username)
 
     args = message.text.split(maxsplit=1)
-    if len(args) > 1 and args[1].startswith("ref_"):
-        try:
-            referrer_id = int(args[1][4:])
-            if referrer_id != uid:
-                await set_referrer(uid, referrer_id)
-        except ValueError:
-            pass
+    if len(args) > 1:
+        arg = args[1]
+        if arg.startswith("ref_"):
+            try:
+                referrer_id = int(arg[4:])
+                if referrer_id != uid:
+                    await set_referrer(uid, referrer_id)
+            except ValueError:
+                pass
+        elif arg.startswith("m_"):
+            mcode = arg[2:]
+            mlink = await get_marketing_link_by_code(mcode)
+            if mlink:
+                await increment_marketing_clicks(mcode)
+                await set_user_marketing_link(uid, mlink["id"])
 
     text = (
         f"{CE_ZAP} <b>Проксиль — Прокси для Telegram</b>\n\n"
@@ -260,6 +270,7 @@ async def referral_info(callback: CallbackQuery):
 @router.callback_query(F.data == "buy_sub")
 async def buy_sub(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BuyFlow.choosing_devices)
+    await state.update_data(username=callback.from_user.username)
     await callback.message.edit_media(
         _cover_media("Выберите количество устройств:"),
         reply_markup=devices_keyboard(),
@@ -367,10 +378,14 @@ async def show_confirmation(msg, state: FSMContext, devices: int, months: int, e
     price_per_month = get_device_price(devices)
 
     telegram_id = msg.chat.id if hasattr(msg, 'chat') else msg.from_user.id
+    data = await state.get_data()
+    username = data.get("username")
 
     try:
-        result = create_yookassa_payment(telegram_id, devices, months)
-    except Exception:
+        result = create_yookassa_payment(telegram_id, devices, months, username=username)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("YooKassa payment creation failed: %s", e)
         kb = await main_keyboard(telegram_id)
         if edit:
             await msg.edit_media(_cover_media("Ошибка при создании платежа. Попробуйте позже."), reply_markup=kb)

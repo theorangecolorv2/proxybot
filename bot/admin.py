@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
@@ -12,6 +13,9 @@ from config import ADMIN_IDS
 from db import (
     get_users_count, get_active_subscriptions_count,
     get_payments_stats, get_all_user_ids,
+    get_all_marketing_links, get_marketing_link_by_id,
+    get_marketing_link_by_code, create_marketing_link,
+    delete_marketing_link,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,6 +25,7 @@ router = Router()
 
 class AdminStates(StatesGroup):
     waiting_broadcast_message = State()
+    waiting_marketing_link_code = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -36,6 +41,7 @@ async def handle_admin_command(message: Message) -> None:
 
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
+    builder.row(InlineKeyboardButton(text="🔗 Ссылки для блогеров", callback_data="admin_marketing_links"))
     builder.row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
 
     await message.answer(
@@ -55,6 +61,7 @@ async def handle_admin_back(callback: CallbackQuery, state: FSMContext) -> None:
 
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
+    builder.row(InlineKeyboardButton(text="🔗 Ссылки для блогеров", callback_data="admin_marketing_links"))
     builder.row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
 
     await callback.message.edit_text(
@@ -91,6 +98,200 @@ async def handle_admin_stats(callback: CallbackQuery) -> None:
         reply_markup=builder.as_markup(),
     )
     await callback.answer()
+
+
+# --- Marketing links ---
+
+@router.callback_query(F.data == "admin_marketing_links")
+async def handle_admin_marketing_links(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        return
+
+    links = await get_all_marketing_links()
+
+    builder = InlineKeyboardBuilder()
+    for link in links[:20]:
+        builder.row(InlineKeyboardButton(
+            text=f"🔗 {link['code']} ({link['clicks_count']}/{link['paid_count']})",
+            callback_data=f"admin_mlink_{link['id']}",
+        ))
+    builder.row(InlineKeyboardButton(text="➕ Создать ссылку", callback_data="admin_mlink_create"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back"))
+
+    await callback.message.edit_text(
+        "🔗 <b>Ссылки для блогеров</b>\n\n"
+        "Формат: название (переходы/оплаты)\n\n"
+        "Выберите ссылку для просмотра статистики или создайте новую:",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_mlink_create")
+async def handle_mlink_create(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        return
+
+    await state.set_state(AdminStates.waiting_marketing_link_code)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="admin_marketing_links"))
+
+    bot_info = await callback.bot.get_me()
+
+    await callback.message.edit_text(
+        "🔗 <b>Создание ссылки для блогера</b>\n\n"
+        "Введите название ссылки (только латиница, без пробелов):\n\n"
+        f"Например: <code>mamix</code>\n"
+        f"Диплинк будет: <code>t.me/{bot_info.username}?start=m_mamix</code>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_marketing_link_code)
+async def handle_mlink_code_input(message: Message, state: FSMContext) -> None:
+    if not is_admin(message.from_user.id):
+        return
+
+    code = message.text.strip().lower()
+
+    if not re.match(r'^[a-z0-9_-]+$', code):
+        await message.answer(
+            "❌ Название может содержать только латинские буквы, цифры, _ и -\n\n"
+            "Попробуйте ещё раз:"
+        )
+        return
+
+    existing = await get_marketing_link_by_code(code)
+    if existing:
+        await message.answer(
+            f"❌ Ссылка с названием <code>{code}</code> уже существует.\n\n"
+            "Введите другое название:",
+            parse_mode="HTML",
+        )
+        return
+
+    link = await create_marketing_link(code=code, created_by=message.from_user.id)
+
+    await state.clear()
+
+    bot_info = await message.bot.get_me()
+    deeplink = f"https://t.me/{bot_info.username}?start=m_{code}"
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="➕ Создать ещё", callback_data="admin_mlink_create"))
+    builder.row(InlineKeyboardButton(text="📋 К списку", callback_data="admin_marketing_links"))
+    builder.row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_back"))
+
+    await message.answer(
+        f"✅ <b>Ссылка создана!</b>\n\n"
+        f"📝 Название: <code>{link['code']}</code>\n"
+        f"🔗 Диплинк:\n<code>{deeplink}</code>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.callback_query(
+    F.data.startswith("admin_mlink_")
+    & ~F.data.in_({"admin_mlink_create"})
+    & ~F.data.startswith("admin_mlink_delete_")
+    & ~F.data.startswith("admin_mlink_confirm_")
+)
+async def handle_mlink_detail(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        return
+
+    link_id = int(callback.data.replace("admin_mlink_", ""))
+    link = await get_marketing_link_by_id(link_id)
+
+    if not link:
+        await callback.answer("Ссылка не найдена", show_alert=True)
+        return
+
+    bot_info = await callback.bot.get_me()
+    deeplink = f"https://t.me/{bot_info.username}?start=m_{link['code']}"
+    created = link["created_at"][:10] if link["created_at"] else "?"
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_mlink_delete_{link['id']}"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_marketing_links"))
+
+    await callback.message.edit_text(
+        f"🔗 <b>Ссылка: {link['code']}</b>\n\n"
+        f"👥 Переходов: <b>{link['clicks_count']}</b>\n"
+        f"💰 Оплат: <b>{link['paid_count']}</b>\n"
+        f"📅 Создана: {created}\n\n"
+        f"🔗 Диплинк:\n<code>{deeplink}</code>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_mlink_delete_"))
+async def handle_mlink_delete_confirm(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        return
+
+    link_id = int(callback.data.replace("admin_mlink_delete_", ""))
+    link = await get_marketing_link_by_id(link_id)
+
+    if not link:
+        await callback.answer("Ссылка не найдена", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"admin_mlink_confirm_{link['id']}"))
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_mlink_{link['id']}"))
+
+    await callback.message.edit_text(
+        f"🗑 <b>Удаление ссылки</b>\n\n"
+        f"Вы уверены, что хотите удалить ссылку <code>{link['code']}</code>?\n\n"
+        f"Статистика будет потеряна:\n"
+        f"• Переходов: {link['clicks_count']}\n"
+        f"• Оплат: {link['paid_count']}",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_mlink_confirm_"))
+async def handle_mlink_delete(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        return
+
+    link_id = int(callback.data.replace("admin_mlink_confirm_", ""))
+    deleted = await delete_marketing_link(link_id)
+
+    if deleted:
+        await callback.answer("✅ Ссылка удалена", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка удаления", show_alert=True)
+        return
+
+    links = await get_all_marketing_links()
+
+    builder = InlineKeyboardBuilder()
+    for link in links[:20]:
+        builder.row(InlineKeyboardButton(
+            text=f"🔗 {link['code']} ({link['clicks_count']}/{link['paid_count']})",
+            callback_data=f"admin_mlink_{link['id']}",
+        ))
+    builder.row(InlineKeyboardButton(text="➕ Создать ссылку", callback_data="admin_mlink_create"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back"))
+
+    await callback.message.edit_text(
+        "🔗 <b>Ссылки для блогеров</b>\n\n"
+        "Формат: название (переходы/оплаты)\n\n"
+        "Выберите ссылку для просмотра статистики или создайте новую:",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
 
 
 # --- Broadcast ---

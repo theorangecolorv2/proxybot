@@ -15,6 +15,7 @@ from db import (
     get_referrer,
     has_referral_rewarded,
     mark_referral_rewarded,
+    increment_marketing_paid,
 )
 from secret_gen import generate_raw_secret, make_tls_link_secret
 from proxy_manager import add_secret, update_secret_ips
@@ -105,6 +106,9 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
                 parse_mode=ParseMode.HTML,
                 reply_markup=await main_keyboard(telegram_id),
             )
+
+        # --- Marketing link tracking ---
+        await increment_marketing_paid(telegram_id)
 
         # --- Referral bonus ---
         await _process_referral_bonus(bot, telegram_id)

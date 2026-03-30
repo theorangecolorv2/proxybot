@@ -42,6 +42,16 @@ async def init_db():
                 UNIQUE(subscription_id, notification_type)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS marketing_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                clicks_count INTEGER DEFAULT 0,
+                paid_count INTEGER DEFAULT 0,
+                created_at TEXT,
+                created_by INTEGER NOT NULL
+            )
+        """)
         await db.commit()
 
         # Migrations: add new columns idempotently
@@ -53,6 +63,7 @@ async def init_db():
             ("users", "trial_used", "INTEGER", 0),
             ("users", "referred_by", "INTEGER", "NULL"),
             ("users", "referral_rewarded", "INTEGER", 0),
+            ("users", "marketing_link_id", "INTEGER", "NULL"),
         ]:
             try:
                 await db.execute(
@@ -334,3 +345,77 @@ async def get_all_user_ids() -> list[int]:
         cursor = await db.execute("SELECT telegram_id FROM users ORDER BY rowid")
         rows = await cursor.fetchall()
         return [row[0] for row in rows]
+
+
+# --- Marketing links ---
+
+async def get_all_marketing_links() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM marketing_links ORDER BY created_at DESC")
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_marketing_link_by_id(link_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM marketing_links WHERE id = ?", (link_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_marketing_link_by_code(code: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM marketing_links WHERE code = ?", (code,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def create_marketing_link(code: str, created_by: int) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO marketing_links (code, created_by, created_at) VALUES (?, ?, ?)",
+            (code, created_by, now),
+        )
+        await db.commit()
+        return {"id": cursor.lastrowid, "code": code, "clicks_count": 0, "paid_count": 0, "created_at": now}
+
+
+async def delete_marketing_link(link_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM marketing_links WHERE id = ?", (link_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def increment_marketing_clicks(code: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE marketing_links SET clicks_count = clicks_count + 1 WHERE code = ?", (code,)
+        )
+        await db.commit()
+
+
+async def increment_marketing_paid(telegram_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT marketing_link_id FROM users WHERE telegram_id = ?", (telegram_id,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            await db.execute(
+                "UPDATE marketing_links SET paid_count = paid_count + 1 WHERE id = ?", (row[0],)
+            )
+            await db.commit()
+
+
+async def set_user_marketing_link(telegram_id: int, link_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET marketing_link_id = ? WHERE telegram_id = ? AND marketing_link_id IS NULL",
+            (link_id, telegram_id),
+        )
+        await db.commit()
