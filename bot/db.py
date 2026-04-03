@@ -213,6 +213,16 @@ async def get_payment_by_yookassa_id(yookassa_payment_id: str) -> dict | None:
         return dict(row) if row else None
 
 
+async def get_pending_payments() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM payments WHERE status = 'pending'"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
 async def update_payment_status(yookassa_payment_id: str, status: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(

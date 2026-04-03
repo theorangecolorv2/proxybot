@@ -24,6 +24,79 @@ from handlers import main_keyboard, CE_SUCCESS, CE_LINK, CE_EARN, CE_FIRE, _cove
 logger = logging.getLogger(__name__)
 
 
+async def process_successful_payment(bot: Bot, yookassa_payment_id: str) -> bool:
+    """Process a succeeded payment. Returns True if processed, False if skipped."""
+    payment = await get_payment_by_yookassa_id(yookassa_payment_id)
+    if not payment:
+        logger.warning("Payment %s not found in DB", yookassa_payment_id)
+        return False
+
+    if payment["status"] == "succeeded":
+        return False
+
+    telegram_id = payment["telegram_id"]
+    devices = payment.get("devices", 1)
+    months = payment.get("months", 1)
+
+    existing_sub = await get_active_subscription(telegram_id)
+
+    if existing_sub:
+        old_devices = existing_sub.get("devices", 1)
+        if devices > old_devices:
+            await update_secret_ips(existing_sub["username"], existing_sub["secret"], devices)
+        await extend_subscription(existing_sub["id"], months=months, devices=devices)
+        await update_payment_status(yookassa_payment_id, "succeeded")
+
+        link_secret = make_tls_link_secret(existing_sub["secret"])
+        link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
+        await bot.send_photo(
+            telegram_id,
+            _cover(),
+            caption=(
+                f"Оплата успешно прошла! Подписка продлена {CE_SUCCESS}\n\n"
+                f"Ваша ссылка не изменилась {CE_LINK}\n\n"
+                f"{link}"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=await main_keyboard(telegram_id),
+        )
+    else:
+        raw_secret = generate_raw_secret()
+        username = f"tg_{telegram_id}_{raw_secret[:8]}"
+
+        success = await add_secret(username, raw_secret, max_unique_ips=devices)
+        if not success:
+            logger.error("Failed to create proxy for user %s", telegram_id)
+            await bot.send_photo(
+                telegram_id,
+                _cover(),
+                caption="Оплата прошла, но произошла ошибка при создании прокси. Обратитесь в поддержку.",
+            )
+            return False
+
+        await update_payment_status(yookassa_payment_id, "succeeded")
+
+        link_secret = make_tls_link_secret(raw_secret)
+        await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
+
+        link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
+        await bot.send_photo(
+            telegram_id,
+            _cover(),
+            caption=(
+                f"Оплата успешно прошла! {CE_SUCCESS}\n\n"
+                f"Нажмите на ссылку, далее нажмите подключиться и телеграмм летает! {CE_LINK}\n\n"
+                f"{link}"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=await main_keyboard(telegram_id),
+        )
+
+    await increment_marketing_paid(telegram_id)
+    await _process_referral_bonus(bot, telegram_id)
+    return True
+
+
 async def handle_yookassa_webhook(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -38,81 +111,7 @@ async def handle_yookassa_webhook(request: web.Request) -> web.Response:
         return web.Response(status=400)
 
     if event_type == "payment.succeeded":
-        payment = await get_payment_by_yookassa_id(payment_id)
-        if not payment:
-            logger.warning("Payment %s not found in DB", payment_id)
-            return web.Response(status=200)
-
-        if payment["status"] == "succeeded":
-            return web.Response(status=200)
-
-        telegram_id = payment["telegram_id"]
-        devices = payment.get("devices", 1)
-        months = payment.get("months", 1)
-        bot: Bot = request.app["bot"]
-
-        existing_sub = await get_active_subscription(telegram_id)
-
-        if existing_sub:
-            # Extend existing subscription — same secret, same link
-            old_devices = existing_sub.get("devices", 1)
-            if devices > old_devices:
-                await update_secret_ips(existing_sub["username"], existing_sub["secret"], devices)
-            await extend_subscription(existing_sub["id"], months=months, devices=devices)
-            await update_payment_status(payment_id, "succeeded")
-
-            link_secret = make_tls_link_secret(existing_sub["secret"])
-            link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-            await bot.send_photo(
-                telegram_id,
-                _cover(),
-                caption=(
-                    f"Оплата успешно прошла! Подписка продлена {CE_SUCCESS}\n\n"
-                    f"Ваша ссылка не изменилась {CE_LINK}\n\n"
-                    f"{link}"
-                ),
-                parse_mode=ParseMode.HTML,
-                reply_markup=await main_keyboard(telegram_id),
-            )
-        else:
-            # New subscription — create proxy secret
-            raw_secret = generate_raw_secret()
-            username = f"tg_{telegram_id}_{raw_secret[:8]}"
-
-            success = await add_secret(username, raw_secret, max_unique_ips=devices)
-            if not success:
-                logger.error("Failed to create proxy for user %s", telegram_id)
-                await bot.send_photo(
-                    telegram_id,
-                    _cover(),
-                    caption="Оплата прошла, но произошла ошибка при создании прокси. Обратитесь в поддержку.",
-                )
-                return web.Response(status=200)
-
-            await update_payment_status(payment_id, "succeeded")
-
-            link_secret = make_tls_link_secret(raw_secret)
-            await add_subscription(telegram_id, raw_secret, username, devices=devices, months=months)
-
-            link = f"tg://proxy?server={quote(PROXY_HOST)}&port={PROXY_PORT}&secret={link_secret}"
-            await bot.send_photo(
-                telegram_id,
-                _cover(),
-                caption=(
-                    f"Оплата успешно прошла! {CE_SUCCESS}\n\n"
-                    f"Нажмите на ссылку, далее нажмите подключиться и телеграмм летает! {CE_LINK}\n\n"
-                    f"{link}"
-                ),
-                parse_mode=ParseMode.HTML,
-                reply_markup=await main_keyboard(telegram_id),
-            )
-
-        # --- Marketing link tracking ---
-        await increment_marketing_paid(telegram_id)
-
-        # --- Referral bonus ---
-        await _process_referral_bonus(bot, telegram_id)
-
+        await process_successful_payment(request.app["bot"], payment_id)
     elif event_type == "payment.canceled":
         await update_payment_status(payment_id, "canceled")
 
