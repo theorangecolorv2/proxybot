@@ -214,10 +214,19 @@ async def get_payment_by_yookassa_id(yookassa_payment_id: str) -> dict | None:
 
 
 async def get_pending_payments() -> list[dict]:
+    """Return pending payments created within the last hour; expire older ones."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
+        # Auto-expire stale pending payments
+        await db.execute(
+            "UPDATE payments SET status = 'expired' WHERE status = 'pending' AND created_at < ?",
+            (cutoff,),
+        )
+        await db.commit()
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM payments WHERE status = 'pending'"
+            "SELECT * FROM payments WHERE status = 'pending' AND created_at >= ?",
+            (cutoff,),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

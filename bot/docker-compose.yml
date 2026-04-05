@@ -6,3 +6,9 @@ services:
       - ./data:/app/data
     network_mode: host
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f /tmp/health ] && [ $$(( $(date +%s) - $(stat -c %Y /tmp/health) )) -lt 120 ]"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
